@@ -1,5 +1,5 @@
 local Games = {
-    [83321986508238] = {
+    [9047170428] = {
         Name = "Brainrot Clicker",
         URL  = "https://raw.githubusercontent.com/fixingbugsat3am-dot/loadstringg/main/Scripts/GamesScripts/BrainrotClicker.lua",
     },
