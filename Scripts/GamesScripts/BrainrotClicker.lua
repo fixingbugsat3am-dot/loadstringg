@@ -239,7 +239,20 @@ local Window = WindUI:CreateWindow({
 
 })
 
-
+Window:EditOpenButton({
+    Title = "OPEN",
+    Icon = "terminal",
+    CornerRadius = UDim.new(0,16),
+    StrokeThickness = 3.5,
+    Color = ColorSequence.new( -- gradient
+        Color3.fromHex("ffffff"), 
+        Color3.fromHex("bdbdbd"),
+        Color3.fromHex("7a7a7a"),
+    ),
+    OnlyMobile = false,
+    Enabled = true,
+    Draggable = true,
+})
 
 --FONT
 WindUI:SetFont("rbxasset://fonts/families/GothamSSm.json")
@@ -939,14 +952,32 @@ local ThemeDropdown = Misc:Dropdown({
 ApplyTheme(Themes[1])
 
 
-Window:Close()
+local UIS = game:GetService("UserInputService")
 
-WindUI:Notify({
-    Title = "Window Closed",
-    Content = "You can open the UI again by pressing K",
-    Duration = 5,
-    Icon = "keyboard",
-})
+local WindowOpened = true
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then
+        return
+    end
+
+    if input.KeyCode == Enum.KeyCode.K then
+        if WindowOpened then
+            Window:Close()
+            WindowOpened = false
+
+            WindUI:Notify({
+                Title = "Window Closed",
+                Content = "You can open the UI again by pressing K",
+                Duration = 5,
+                Icon = "keyboard",
+            })
+        else
+            Window:Open()
+            WindowOpened = true
+        end
+    end
+end)
 
 
 local FirstTime = not getgenv().KairoxHubJoinedBefore
