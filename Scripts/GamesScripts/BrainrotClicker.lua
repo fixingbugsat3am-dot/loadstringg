@@ -273,33 +273,6 @@ Window:Tag({
     Radius = 8,
 })
 
-local FPSTag = Window:Tag({
-    Title = "FPS: 0",
-    Icon = "activity", -- nice live-style icon
-    Color = Color3.fromHex("#2a2a2e"),
-    Radius = 8,
-})
-
--- FPS counter
-local lastTime = tick()
-local frameCount = 0
-
-RunService.RenderStepped:Connect(function()
-    frameCount += 1
-
-    if tick() - lastTime >= 1 then
-        local fps = frameCount
-        frameCount = 0
-        lastTime = tick()
-
-        -- Update tag (this depends on WindUI having SetTitle or similar)
-        if FPSTag and FPSTag.SetTitle then
-            FPSTag:SetTitle("FPS: " .. fps)
-        elseif FPSTag and FPSTag.Title then
-            FPSTag.Title = "FPS: " .. fps
-        end
-    end
-end)
 
 local Home = Window:Tab({
     Title = "Home",
