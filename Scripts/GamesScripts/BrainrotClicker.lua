@@ -939,6 +939,32 @@ local ThemeDropdown = Misc:Dropdown({
 ApplyTheme(Themes[1])
 
 
+Window:Close()
+
+WindUI:Notify({
+    Title = "Window Closed",
+    Content = "You can open the UI again by pressing K",
+    Duration = 5,
+    Icon = "keyboard",
+})
 
 
+local FirstTime = not getgenv().KairoxHubJoinedBefore
 
+if FirstTime then
+    getgenv().KairoxHubJoinedBefore = true
+
+    WindUI:Notify({
+        Title = "Welcome to KairoxHub!",
+        Content = "Enjoy your experience!",
+        Duration = 5,
+        Icon = "sparkles",
+    })
+else
+    WindUI:Notify({
+        Title = "Welcome back to KairoxHub!",
+        Content = "Glad to see you again!",
+        Duration = 5,
+        Icon = "refresh-cw",
+    })
+end
