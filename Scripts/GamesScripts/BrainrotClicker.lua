@@ -241,7 +241,6 @@ local Window = WindUI:CreateWindow({
 
 Window:EditOpenButton({
     Title = "KairoxHub",
-    Background = "rbxassetid://74044845995165",
     Icon = "terminal",
 
     CornerRadius = UDim.new(0, 18),
