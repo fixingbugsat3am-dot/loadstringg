@@ -251,7 +251,7 @@ Window:EditOpenButton({
         Color3.fromHex("#2a2a2e")
     ),
 
-    OnlyMobile = true,
+    OnlyMobile = false,
     Enabled = true,
     Draggable = true,
 })
