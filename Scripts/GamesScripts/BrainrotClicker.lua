@@ -240,16 +240,19 @@ local Window = WindUI:CreateWindow({
 })
 
 Window:EditOpenButton({
-    Title = "OPEN",
+    Title = "KairoxHub",
+    Background = "rbxassetid://74044845995165",
     Icon = "terminal",
-    CornerRadius = UDim.new(0,16),
-    StrokeThickness = 3.5,
-    Color = ColorSequence.new( -- gradient
-        Color3.fromHex("ffffff"), 
-        Color3.fromHex("bdbdbd"),
-        Color3.fromHex("7a7a7a"),
+
+    CornerRadius = UDim.new(0, 18),
+    StrokeThickness = 3,
+
+    Color = ColorSequence.new(
+        Color3.fromHex("#1c1c1f"),
+        Color3.fromHex("#2a2a2e")
     ),
-    OnlyMobile = false,
+
+    OnlyMobile = true,
     Enabled = true,
     Draggable = true,
 })
@@ -271,35 +274,30 @@ Window:Tag({
     Radius = 8,
 })
 
-local RunService = game:GetService("RunService")
-
-local fps = 0
-
-RunService.RenderStepped:Connect(function(dt)
-    fps = math.floor(1 / dt)
-end)
-
-local tag = Window:Tag({
+local FPSTag = Window:Tag({
     Title = "FPS: 0",
-    Icon = "activity",
-    Color = Color3.fromHex("#000000"),
+    Icon = "activity", -- nice live-style icon
+    Color = Color3.fromHex("#2a2a2e"),
     Radius = 8,
 })
 
-task.spawn(function()
-    while task.wait(0.5) do
-        if tag and tag.SetTitle then
-            tag:SetTitle("FPS: " .. fps)
-        end
+-- FPS counter
+local lastTime = tick()
+local frameCount = 0
 
-        if tag and tag.SetColor then
-            if fps >= 60 then
-                tag:SetColor(Color3.fromHex("#000000"))
-            elseif fps >= 30 then
-                tag:SetColor(Color3.fromHex("#000000"))
-            else
-                tag:SetColor(Color3.fromHex("#000000"))
-            end
+RunService.RenderStepped:Connect(function()
+    frameCount += 1
+
+    if tick() - lastTime >= 1 then
+        local fps = frameCount
+        frameCount = 0
+        lastTime = tick()
+
+        -- Update tag (this depends on WindUI having SetTitle or similar)
+        if FPSTag and FPSTag.SetTitle then
+            FPSTag:SetTitle("FPS: " .. fps)
+        elseif FPSTag and FPSTag.Title then
+            FPSTag.Title = "FPS: " .. fps
         end
     end
 end)
@@ -952,31 +950,31 @@ local ThemeDropdown = Misc:Dropdown({
 ApplyTheme(Themes[1])
 
 
-local UIS = game:GetService("UserInputService")
+local isDesktop = UserInputService.KeyboardEnabled
+local debounce = false
 
-local WindowOpened = true
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode ~= Enum.KeyCode.K then return end
+    if debounce then return end
 
-UIS.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then
-        return
+    debounce = true
+
+    -- wait a frame so WindUI toggles first
+    task.wait(0.1)
+
+    -- 🔥 assume it's CLOSED after pressing K
+    if isDesktop then
+        WindUI:Notify({
+            Title = "KairoxHub",
+            Content = "Press [K] to open the UI again",
+            Duration = 4,
+            Icon = "keyboard",
+        })
     end
 
-    if input.KeyCode == Enum.KeyCode.K then
-        if WindowOpened then
-            Window:Close()
-            WindowOpened = false
-
-            WindUI:Notify({
-                Title = "Window Closed",
-                Content = "You can open the UI again by pressing K",
-                Duration = 5,
-                Icon = "keyboard",
-            })
-        else
-            Window:Open()
-            WindowOpened = true
-        end
-    end
+    task.wait(0.3)
+    debounce = false
 end)
 
 
