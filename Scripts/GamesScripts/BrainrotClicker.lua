@@ -1,3 +1,893 @@
+--[[
+╔══════════════════════════════════════════════════════════════════════════════╗
+║             K A I R O X   H U B  —  C I N E M A T I C  L O A D            ║
+║                  LocalScript  →  place in ReplicatedFirst                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  FEATURES:
+  ▸ Fully transparent background — blurred game world shows through
+  ▸ 55-particle floating field with individual pulse & drift
+  ▸ Animated screen-wide scanline + internal card scanline
+  ▸ Subtle world-space grid overlay
+  ▸ Vignette edges (no solid backdrop, just dark corners)
+  ▸ Large soft glow orb pulsing behind the card
+  ▸ Glassmorphism card: bg asset + WindUI gradient + scrim
+  ▸ Top-edge highlight line + UIStroke border
+  ▸ Four animated corner bracket decorations
+  ▸ KAIROX — letter-by-letter staggered reveal with gradient
+  ▸ HUB pill  •  LIVE pill (pulsing)  •  version pill
+  ▸ Animated separator with a sliding dot
+  ▸ 10-segment progress bar + smooth gradient fill overlay
+  ▸ Shimmer sweep on bar fill
+  ▸ Glow dot tracks the right edge of the fill
+  ▸ Live % counter via Heartbeat
+  ▸ 6-step indicator dots with labels
+  ▸ Status text crossfade between phases
+  ▸ Tip bar cycling every 4 s
+  ▸ Card entrance (slide up + CanvasGroup fade)
+  ▸ Epic exit (card fires upward, particles scatter, blur dissolves)
+--]]
+
+-- ── Services ──────────────────────────────────────────────────────────────────
+local Players         = game:GetService("Players")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local TweenService    = game:GetService("TweenService")
+local RunService      = game:GetService("RunService")
+local Lighting        = game:GetService("Lighting")
+
+ReplicatedFirst:RemoveDefaultLoadingScreen()
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ── Fonts ─────────────────────────────────────────────────────────────────────
+local FAM    = "rbxasset://fonts/families/GothamSSm.json"
+local F_REG  = Font.new(FAM, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+local F_BOLD = Font.new(FAM, Enum.FontWeight.Bold,    Enum.FontStyle.Normal)
+local F_HVY  = Font.new(FAM, Enum.FontWeight.Heavy,   Enum.FontStyle.Normal)
+
+-- ── Constants ─────────────────────────────────────────────────────────────────
+local CARD_W    = 560
+local CARD_H    = 365
+local SEG_COUNT = 10
+local SEG_GAP   = 3
+local BAR_H     = 6
+local RNG       = Random.new()
+
+local TIPS = {
+    "Tip: Use /cmds to view all available commands",
+    "Tip: Join our Discord server for early updates",
+    "Tip: KAIROX HUB receives weekly content drops",
+    "Tip: Report bugs so we can patch them fast",
+    "Tip: Check the changelog for what's new today",
+}
+
+local STEPS_DATA = {
+    { pct = 0.10, msg = "Booting KAIROX engine…",         step = 1, delay = 0.55 },
+    { pct = 0.28, msg = "Fetching asset manifests…",      step = 2, delay = 0.80 },
+    { pct = 0.47, msg = "Connecting to game servers…",    step = 3, delay = 0.70 },
+    { pct = 0.65, msg = "Hydrating your player session…", step = 4, delay = 0.75 },
+    { pct = 0.83, msg = "Rendering final layers…",        step = 5, delay = 0.60 },
+    { pct = 1.00, msg = "Welcome to KAIROX HUB  ✦",       step = 6, delay = 0.00 },
+}
+
+local STEP_LABELS = { "INIT", "ASSETS", "NET", "DATA", "RENDER", "READY" }
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+local function tw(obj, t, style, dir, props)
+    local tween = TweenService:Create(obj,
+        TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
+        props)
+    tween:Play()
+    return tween
+end
+
+local function corner(p, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 12)
+    c.Parent = p
+end
+
+local function grad(parent, rot, colorKPs, transKPs)
+    local g = Instance.new("UIGradient")
+    g.Rotation = rot or 0
+    g.Color    = ColorSequence.new(colorKPs)
+    if transKPs then g.Transparency = NumberSequence.new(transKPs) end
+    g.Parent = parent
+end
+
+local function stroke(p, color, thick, trans)
+    local s = Instance.new("UIStroke")
+    s.Color           = color or Color3.new(1,1,1)
+    s.Thickness       = thick or 1
+    s.Transparency    = trans or 0.7
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = p
+end
+
+local function newFrame(parent, props)
+    local f = Instance.new("Frame")
+    f.BorderSizePixel        = 0
+    f.BackgroundTransparency = 1
+    for k, v in pairs(props or {}) do f[k] = v end
+    f.Parent = parent
+    return f
+end
+
+local function newLabel(parent, props)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.BorderSizePixel        = 0
+    for k, v in pairs(props or {}) do l[k] = v end
+    l.Parent = parent
+    return l
+end
+
+local function hlist(parent, padding)
+    local ll = Instance.new("UIListLayout")
+    ll.FillDirection     = Enum.FillDirection.Horizontal
+    ll.Padding           = UDim.new(0, padding or 6)
+    ll.VerticalAlignment = Enum.VerticalAlignment.Center
+    ll.Parent = parent
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- BLUR  (game world visible through the UI)
+-- ══════════════════════════════════════════════════════════════════════════════
+local blur = Instance.new("BlurEffect")
+blur.Size   = 0
+blur.Parent = Lighting
+tw(blur, 1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { Size = 44 })
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SCREENGUI  (transparent — Roblox world shows through!)
+-- ══════════════════════════════════════════════════════════════════════════════
+local gui = Instance.new("ScreenGui")
+gui.Name           = "KairoxHub_Loading"
+gui.IgnoreGuiInset = true
+gui.DisplayOrder   = 999
+gui.ResetOnSpawn   = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent         = playerGui
+
+local root = newFrame(gui, { Size = UDim2.fromScale(1,1), ZIndex = 1 })
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- VIGNETTE  (4 dark edge panels — no solid backdrop)
+-- ══════════════════════════════════════════════════════════════════════════════
+local function vignette(size, pos, rot)
+    local f = newFrame(root, {
+        Size = size, Position = pos,
+        BackgroundColor3 = Color3.fromHex("#000000"),
+        BackgroundTransparency = 0,
+        ZIndex = 2,
+    })
+    grad(f, rot, {
+        ColorSequenceKeypoint.new(0, Color3.fromHex("#000000")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("#000000")),
+    }, {
+        NumberSequenceKeypoint.new(0, 0.0),
+        NumberSequenceKeypoint.new(1, 1.0),
+    })
+end
+
+vignette(UDim2.new(1,0,0.38,0), UDim2.fromScale(0,0),    90)
+vignette(UDim2.new(1,0,0.38,0), UDim2.new(0,0,0.62,0),  270)
+vignette(UDim2.new(0.28,0,1,0), UDim2.fromScale(0,0),     0)
+vignette(UDim2.new(0.28,0,1,0), UDim2.new(0.72,0,0,0),  180)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- GRID OVERLAY  (subtle world-space grid lines)
+-- ══════════════════════════════════════════════════════════════════════════════
+local gridCon = newFrame(root, { Size = UDim2.fromScale(1,1), ZIndex = 3 })
+
+for col = 1, 13 do
+    newFrame(gridCon, {
+        Size = UDim2.new(0,1,1,0),
+        Position = UDim2.fromScale(col/14, 0),
+        BackgroundColor3 = Color3.fromHex("#ffffff"),
+        BackgroundTransparency = 0.955, ZIndex = 3,
+    })
+end
+for row = 1, 8 do
+    newFrame(gridCon, {
+        Size = UDim2.new(1,0,0,1),
+        Position = UDim2.fromScale(0, row/9),
+        BackgroundColor3 = Color3.fromHex("#ffffff"),
+        BackgroundTransparency = 0.955, ZIndex = 3,
+    })
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- GLOBAL SCAN LINE
+-- ══════════════════════════════════════════════════════════════════════════════
+local scanLine = newFrame(root, {
+    Size = UDim2.new(1,0,0,2),
+    Position = UDim2.fromScale(0,-0.02),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0,
+    ZIndex = 5,
+})
+grad(scanLine, 0, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.25, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.75, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,    1),
+    NumberSequenceKeypoint.new(0.25, 0.78),
+    NumberSequenceKeypoint.new(0.75, 0.78),
+    NumberSequenceKeypoint.new(1,    1),
+})
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SOFT GLOW ORB  (behind the card)
+-- ══════════════════════════════════════════════════════════════════════════════
+local glowOrb = Instance.new("ImageLabel")
+glowOrb.Size                = UDim2.fromOffset(900, 900)
+glowOrb.AnchorPoint         = Vector2.new(0.5, 0.5)
+glowOrb.Position            = UDim2.fromScale(0.5, 0.5)
+glowOrb.BackgroundTransparency = 1
+glowOrb.Image               = "rbxasset://textures/particles/fire_main.dds"
+glowOrb.ImageColor3         = Color3.fromHex("#b0b0c8")
+glowOrb.ImageTransparency   = 0.91
+glowOrb.ScaleType           = Enum.ScaleType.Stretch
+glowOrb.ZIndex              = 4
+glowOrb.Parent              = root
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- PARTICLE FIELD  (55 floating dots)
+-- ══════════════════════════════════════════════════════════════════════════════
+local partCon  = newFrame(root, { Size = UDim2.fromScale(1,1), ZIndex = 5 })
+local particles = {}
+
+for _ = 1, 55 do
+    local sz    = RNG:NextNumber(2, 5)
+    local angle = RNG:NextNumber(0, math.pi * 2)
+    local speed = RNG:NextNumber(0.25, 1.1)
+    local bx    = RNG:NextNumber(0, 1)
+    local by    = RNG:NextNumber(0, 1)
+
+    local p = newFrame(partCon, {
+        Size = UDim2.fromOffset(sz, sz),
+        Position = UDim2.fromScale(bx, by),
+        BackgroundColor3 = Color3.fromHex("#ffffff"),
+        BackgroundTransparency = RNG:NextNumber(0.55, 0.90),
+        ZIndex = 5,
+    })
+    corner(p, 99)
+
+    table.insert(particles, {
+        f        = p,
+        dx       = math.cos(angle) * speed,
+        dy       = math.sin(angle) * speed,
+        bx       = bx,
+        by       = by,
+        phase    = RNG:NextNumber(0, math.pi * 2),
+        pspd     = RNG:NextNumber(0.5, 2.0),
+        baseAlph = RNG:NextNumber(0.55, 0.88),
+    })
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CANVAS GROUP  (entire card — enables GroupTransparency fade)
+-- ══════════════════════════════════════════════════════════════════════════════
+local canvas = Instance.new("CanvasGroup")
+canvas.Name               = "KairoxCard"
+canvas.Size               = UDim2.fromOffset(CARD_W, CARD_H)
+canvas.AnchorPoint        = Vector2.new(0.5, 0.5)
+canvas.Position           = UDim2.new(0.5, 0, 0.58, 0)
+canvas.BackgroundTransparency = 1
+canvas.GroupTransparency  = 1
+canvas.ZIndex             = 6
+canvas.Parent             = root
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CARD SHELL  (glassmorphism)
+-- ══════════════════════════════════════════════════════════════════════════════
+local card = newFrame(canvas, {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = Color3.fromHex("#0c0c14"),
+    BackgroundTransparency = 0.08,
+    ZIndex = 1,
+})
+corner(card, 24)
+
+-- Background asset image
+local bgImg = Instance.new("ImageLabel")
+bgImg.Size               = UDim2.fromScale(1,1)
+bgImg.BackgroundTransparency = 1
+bgImg.Image              = "rbxassetid://74044845995165"
+bgImg.ImageTransparency  = 0.48
+bgImg.ScaleType          = Enum.ScaleType.Crop
+bgImg.ZIndex             = 2
+bgImg.Parent             = card
+corner(bgImg, 24)
+
+-- WindUI-style gradient (exactly as requested)
+grad(bgImg, 90, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.50, Color3.fromHex("#bdbdbd")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#7a7a7a")),
+}, {
+    NumberSequenceKeypoint.new(0,    0.52),
+    NumberSequenceKeypoint.new(0.50, 0.62),
+    NumberSequenceKeypoint.new(1,    0.74),
+})
+
+-- Dark scrim for legibility
+local scrim = newFrame(card, {
+    Size = UDim2.fromScale(1,1),
+    BackgroundColor3 = Color3.fromHex("#000000"),
+    BackgroundTransparency = 0.32,
+    ZIndex = 3,
+})
+corner(scrim, 24)
+
+-- Top edge highlight line
+local topLine = newFrame(card, {
+    Size = UDim2.new(0.62,0,0,1),
+    AnchorPoint = Vector2.new(0.5, 0),
+    Position = UDim2.new(0.5,0,0,1),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0,
+    ZIndex = 8,
+})
+corner(topLine, 1)
+grad(topLine, 0, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.12, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.88, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,    1),
+    NumberSequenceKeypoint.new(0.12, 0.05),
+    NumberSequenceKeypoint.new(0.88, 0.05),
+    NumberSequenceKeypoint.new(1,    1),
+})
+
+stroke(card, Color3.fromHex("#ffffff"), 1.2, 0.8)
+
+-- Internal card scan line
+local cardScan = newFrame(card, {
+    Size = UDim2.new(1,0,0,70),
+    Position = UDim2.fromScale(0,-0.25),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0,
+    ZIndex = 7,
+})
+grad(cardScan, 90, {
+    ColorSequenceKeypoint.new(0,   Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.5, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,   Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,   1),
+    NumberSequenceKeypoint.new(0.3, 0.90),
+    NumberSequenceKeypoint.new(0.5, 0.86),
+    NumberSequenceKeypoint.new(0.7, 0.90),
+    NumberSequenceKeypoint.new(1,   1),
+})
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CORNER BRACKETS
+-- ══════════════════════════════════════════════════════════════════════════════
+local function bracket(ax, ay, px, py, ox, oy)
+    local LEN, THICK = 22, 2
+    local C, T = Color3.fromHex("#ffffff"), 0.48
+
+    local con = newFrame(canvas, {
+        Size = UDim2.fromOffset(LEN+THICK, LEN+THICK),
+        AnchorPoint = Vector2.new(ax, ay),
+        Position = UDim2.new(px, ox, py, oy),
+        ZIndex = 9,
+    })
+
+    local h = newFrame(con, {
+        Size = UDim2.fromOffset(LEN, THICK),
+        AnchorPoint = Vector2.new(ax, ay),
+        Position = UDim2.new(ax,0, ay,0),
+        BackgroundColor3 = C, BackgroundTransparency = T, ZIndex = 9,
+    })
+    corner(h, 1)
+
+    local v = newFrame(con, {
+        Size = UDim2.fromOffset(THICK, LEN),
+        AnchorPoint = Vector2.new(ax, ay),
+        Position = UDim2.new(ax,0, ay,0),
+        BackgroundColor3 = C, BackgroundTransparency = T, ZIndex = 9,
+    })
+    corner(v, 1)
+end
+
+bracket(0,0, 0,0,  10, 10)
+bracket(1,0, 1,0, -10, 10)
+bracket(0,1, 0,1,  10,-10)
+bracket(1,1, 1,1, -10,-10)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CONTENT  (inner padding)
+-- ══════════════════════════════════════════════════════════════════════════════
+local content = newFrame(canvas, {
+    Size = UDim2.new(1,-64,1,-50),
+    Position = UDim2.fromOffset(32, 28),
+    ZIndex = 10,
+})
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- LOGO  — K A I R O X  (letter-by-letter stagger + WindUI gradient)
+-- ══════════════════════════════════════════════════════════════════════════════
+local LETTERS  = {"K","A","I","R","O","X"}
+local LWIDTH   = 58
+local logoWrap = newFrame(content, {
+    Size = UDim2.fromOffset(#LETTERS * LWIDTH, 80),
+    Position = UDim2.fromOffset(0, 0),
+    ZIndex = 10,
+})
+
+local letterLabels = {}
+for i, ch in ipairs(LETTERS) do
+    local lbl = newLabel(logoWrap, {
+        Size = UDim2.fromOffset(LWIDTH, 80),
+        Position = UDim2.fromOffset((i-1)*LWIDTH, 12),
+        Text = ch,
+        TextColor3 = Color3.fromHex("#ffffff"),
+        TextSize = 74,
+        FontFace = F_HVY,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        TextTransparency = 1,
+        ZIndex = 11,
+    })
+    grad(lbl, 90, {
+        ColorSequenceKeypoint.new(0,    Color3.fromHex("#ffffff")),
+        ColorSequenceKeypoint.new(0.50, Color3.fromHex("#bdbdbd")),
+        ColorSequenceKeypoint.new(1,    Color3.fromHex("#7a7a7a")),
+    })
+    table.insert(letterLabels, lbl)
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- PILL ROW  (HUB · LIVE · version)
+-- ══════════════════════════════════════════════════════════════════════════════
+local pillRow = newFrame(content, {
+    Size = UDim2.new(1,0,0,26),
+    Position = UDim2.fromOffset(2, 84),
+    ZIndex = 10,
+})
+hlist(pillRow, 8)
+
+local function makePill(parent, text, bgHex, textHex, strokeHex, strokeT)
+    local p = newFrame(parent, {
+        Size = UDim2.fromOffset(0, 24),
+        BackgroundColor3 = Color3.fromHex(bgHex),
+        BackgroundTransparency = 0,
+        AutomaticSize = Enum.AutomaticSize.X,
+        ZIndex = 11,
+    })
+    corner(p, 6)
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingLeft  = UDim.new(0, 10)
+    pad.PaddingRight = UDim.new(0, 10)
+    pad.Parent = p
+
+    local lbl = newLabel(p, {
+        Size = UDim2.fromScale(1,1),
+        Text = text, TextColor3 = Color3.fromHex(textHex),
+        TextSize = 11, FontFace = F_BOLD, ZIndex = 12,
+    })
+    if strokeHex then
+        stroke(p, Color3.fromHex(strokeHex), 1, strokeT or 0.5)
+    end
+    return p, lbl
+end
+
+-- HUB pill with WindUI gradient
+local hubPill = makePill(pillRow, "HUB", "#ffffff", "#111118")
+grad(hubPill, 90, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.50, Color3.fromHex("#bdbdbd")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#7a7a7a")),
+})
+
+-- LIVE pill
+local _, liveText = makePill(pillRow, "● LIVE", "#0d1220", "#44dd66", "#44dd66", 0.45)
+
+-- Version pill
+makePill(pillRow, "v2.0  BETA", "#0d0d1a", "#7070aa", "#ffffff", 0.82)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SEPARATOR  + sliding dot
+-- ══════════════════════════════════════════════════════════════════════════════
+local sep = newFrame(content, {
+    Size = UDim2.new(1,0,0,1),
+    Position = UDim2.fromOffset(0, 123),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0,
+    ZIndex = 10,
+})
+corner(sep, 1)
+grad(sep, 0, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.08, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.92, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,    1),
+    NumberSequenceKeypoint.new(0.08, 0.62),
+    NumberSequenceKeypoint.new(0.92, 0.62),
+    NumberSequenceKeypoint.new(1,    1),
+})
+
+local sepDot = newFrame(content, {
+    Size = UDim2.fromOffset(6,6),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0,0,0,123),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0.25,
+    ZIndex = 11,
+})
+corner(sepDot, 99)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- STATUS ROW
+-- ══════════════════════════════════════════════════════════════════════════════
+local statusLbl = newLabel(content, {
+    Size = UDim2.new(0.72,0,0,20),
+    Position = UDim2.fromOffset(0, 138),
+    Text = "Booting KAIROX engine…",
+    TextColor3 = Color3.fromHex("#8888a8"),
+    TextSize = 13, FontFace = F_REG,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 11,
+})
+
+local pctLbl = newLabel(content, {
+    Size = UDim2.new(0.28,0,0,20),
+    Position = UDim2.new(0.72,0,0,138),
+    Text = "0%",
+    TextColor3 = Color3.fromHex("#ffffff"),
+    TextSize = 13, FontFace = F_BOLD,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    ZIndex = 11,
+})
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- SEGMENTED PROGRESS BAR  +  smooth fill overlay
+-- ══════════════════════════════════════════════════════════════════════════════
+local barTrack = newFrame(content, {
+    Size = UDim2.new(1,0,0,BAR_H),
+    Position = UDim2.fromOffset(0, 164),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0.91,
+    ZIndex = 10,
+})
+corner(barTrack, 99)
+
+local segLayout = Instance.new("UIListLayout")
+segLayout.FillDirection     = Enum.FillDirection.Horizontal
+segLayout.Padding           = UDim.new(0, SEG_GAP)
+segLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+segLayout.Parent            = barTrack
+
+local segFrames = {}
+for _ = 1, SEG_COUNT do
+    local seg = newFrame(barTrack, {
+        Size = UDim2.new(
+            1/SEG_COUNT, -math.ceil(SEG_GAP*(SEG_COUNT-1)/SEG_COUNT),
+            1, 0),
+        BackgroundColor3 = Color3.fromHex("#ffffff"),
+        BackgroundTransparency = 0.88,
+        ZIndex = 11,
+    })
+    corner(seg, 99)
+    table.insert(segFrames, seg)
+end
+
+-- Smooth gradient fill (sits on top of segments)
+local barFill = newFrame(content, {
+    Size = UDim2.new(0,0,0,BAR_H),
+    Position = UDim2.fromOffset(0, 164),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0,
+    ZIndex = 12,
+    ClipsDescendants = true,
+})
+corner(barFill, 99)
+grad(barFill, 0, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.50, Color3.fromHex("#bdbdbd")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#7a7a7a")),
+})
+
+-- Shimmer sweep inside fill
+local shimmer = newFrame(barFill, {
+    Size = UDim2.fromScale(0.42, 1),
+    Position = UDim2.fromScale(-0.55, 0),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0.45,
+    ZIndex = 13,
+})
+corner(shimmer, 99)
+grad(shimmer, 0, {
+    ColorSequenceKeypoint.new(0,   Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.5, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,   Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,   1),
+    NumberSequenceKeypoint.new(0.5, 0.28),
+    NumberSequenceKeypoint.new(1,   1),
+})
+
+-- Leading glow dot at fill right edge
+local fillDot = newFrame(content, {
+    Size = UDim2.fromOffset(8,8),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0,0,0,167),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0.18,
+    ZIndex = 13,
+})
+corner(fillDot, 99)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- STEP INDICATORS
+-- ══════════════════════════════════════════════════════════════════════════════
+local stepsRow = newFrame(content, {
+    Size = UDim2.new(1,0,0,22),
+    Position = UDim2.fromOffset(0, 178),
+    ZIndex = 10,
+})
+hlist(stepsRow, 8)
+
+local stepItems = {}
+for _, name in ipairs(STEP_LABELS) do
+    local con = newFrame(stepsRow, {
+        Size = UDim2.fromOffset(0, 20),
+        AutomaticSize = Enum.AutomaticSize.X,
+        ZIndex = 11,
+    })
+    hlist(con, 4)
+
+    local dot = newFrame(con, {
+        Size = UDim2.fromOffset(5,5),
+        BackgroundColor3 = Color3.fromHex("#ffffff"),
+        BackgroundTransparency = 0.88,
+        ZIndex = 12,
+    })
+    corner(dot, 99)
+
+    local lbl = newLabel(con, {
+        Size = UDim2.fromOffset(0, 20),
+        AutomaticSize = Enum.AutomaticSize.X,
+        Text = name,
+        TextColor3 = Color3.fromHex("#393950"),
+        TextSize = 10, FontFace = F_BOLD,
+        ZIndex = 12,
+    })
+
+    table.insert(stepItems, { dot = dot, lbl = lbl })
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- TIP BAR  (bottom of card)
+-- ══════════════════════════════════════════════════════════════════════════════
+local tipSep = newFrame(content, {
+    Size = UDim2.new(1,0,0,1),
+    Position = UDim2.new(0,0,1,-32),
+    BackgroundColor3 = Color3.fromHex("#ffffff"),
+    BackgroundTransparency = 0.88,
+    ZIndex = 10,
+})
+grad(tipSep, 0, {
+    ColorSequenceKeypoint.new(0,    Color3.fromHex("#000000")),
+    ColorSequenceKeypoint.new(0.08, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(0.92, Color3.fromHex("#ffffff")),
+    ColorSequenceKeypoint.new(1,    Color3.fromHex("#000000")),
+}, {
+    NumberSequenceKeypoint.new(0,    1),
+    NumberSequenceKeypoint.new(0.08, 0.88),
+    NumberSequenceKeypoint.new(0.92, 0.88),
+    NumberSequenceKeypoint.new(1,    1),
+})
+
+local tipLbl = newLabel(content, {
+    Size = UDim2.new(0.72,0,0,20),
+    Position = UDim2.new(0,0,1,-24),
+    Text = TIPS[1],
+    TextColor3 = Color3.fromHex("#4a4a62"),
+    TextSize = 11, FontFace = F_REG,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 11,
+})
+
+newLabel(content, {
+    Size = UDim2.new(0.28,0,0,20),
+    Position = UDim2.new(0.72,0,1,-24),
+    Text = "© 2025  KAIROX HUB",
+    TextColor3 = Color3.fromHex("#2e2e44"),
+    TextSize = 11, FontFace = F_REG,
+    TextXAlignment = Enum.TextXAlignment.Right,
+    ZIndex = 11,
+})
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- RUNTIME LOOP  (particles / scanlines / dot glow / live blink)
+-- ══════════════════════════════════════════════════════════════════════════════
+local alive = true
+local clock = 0
+
+RunService.Heartbeat:Connect(function(dt)
+    if not alive then return end
+    clock += dt
+
+    -- Particle drift + pulse
+    for _, p in ipairs(particles) do
+        local x = (p.bx + p.dx * clock * 0.016) % 1
+        local y = (p.by + p.dy * clock * 0.011) % 1
+        p.f.Position = UDim2.fromScale(x, y)
+        local a = p.baseAlph + math.sin(clock * p.pspd + p.phase) * 0.07
+        p.f.BackgroundTransparency = math.clamp(a, 0.40, 0.96)
+    end
+
+    -- Global scan line
+    scanLine.Position = UDim2.fromScale(0, (clock * 0.17) % 1.12 - 0.04)
+
+    -- Card internal scan
+    cardScan.Position = UDim2.fromScale(0, (clock * 0.10) % 1.35 - 0.22)
+
+    -- Separator travelling dot
+    sepDot.Position = UDim2.new((clock * 0.22) % 1, 0, 0, 123)
+
+    -- Fill dot tracks bar right edge
+    fillDot.Position = UDim2.new(barFill.Size.X.Scale, -4, 0, 167)
+
+    -- Glow orb breathing
+    glowOrb.ImageTransparency = 0.90 + math.sin(clock * 0.65) * 0.03
+
+    -- LIVE blink
+    liveText.TextTransparency = math.abs(math.sin(clock * 1.4)) * 0.55
+end)
+
+-- Perpetual shimmer sweep
+task.spawn(function()
+    while alive do
+        shimmer.Position = UDim2.fromScale(-0.55, 0)
+        local t = TweenService:Create(shimmer,
+            TweenInfo.new(1.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            { Position = UDim2.fromScale(1.35, 0) })
+        t:Play(); t.Completed:Wait()
+        task.wait(0.15)
+    end
+end)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ENTRANCE
+-- ══════════════════════════════════════════════════════════════════════════════
+task.wait(0.05)
+tw(canvas, 0.88, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, {
+    GroupTransparency = 0,
+    Position          = UDim2.new(0.5, 0, 0.5, 0),
+})
+
+-- Letter stagger reveal
+task.spawn(function()
+    task.wait(0.25)
+    for i, lbl in ipairs(letterLabels) do
+        task.wait(0.07)
+        tw(lbl, 0.48, Enum.EasingStyle.Back, Enum.EasingDirection.Out, {
+            TextTransparency = 0,
+            Position         = UDim2.fromOffset((i-1)*LWIDTH, 0),
+        })
+    end
+end)
+
+-- Tip cycling
+task.spawn(function()
+    local ti = 1
+    while alive do
+        task.wait(4.2)
+        tw(tipLbl, 0.18, Enum.EasingStyle.Quad, nil, { TextTransparency = 1 })
+        task.wait(0.22)
+        ti = (ti % #TIPS) + 1
+        tipLbl.Text = TIPS[ti]
+        tw(tipLbl, 0.22, Enum.EasingStyle.Quad, nil, { TextTransparency = 0 })
+    end
+end)
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- PROGRESS ENGINE
+-- ══════════════════════════════════════════════════════════════════════════════
+local currentPct = 0
+
+local function activateSegments(pct)
+    local lit = math.floor(pct * SEG_COUNT + 0.5)
+    for i, seg in ipairs(segFrames) do
+        if i <= lit then
+            tw(seg, 0.28 + i*0.025, Enum.EasingStyle.Quint, nil, {
+                BackgroundTransparency = 0.28,
+                BackgroundColor3       = Color3.fromHex("#ffffff"),
+            })
+        end
+    end
+end
+
+local function activateStep(idx)
+    local s = stepItems[idx]
+    if not s then return end
+    tw(s.dot, 0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out, {
+        BackgroundTransparency = 0,
+        Size = UDim2.fromOffset(7,7),
+    })
+    tw(s.lbl, 0.35, nil, nil, { TextColor3 = Color3.fromHex("#9999cc") })
+end
+
+local function setProgress(targetPct, msg, stepIdx)
+    tw(barFill, 0.62, Enum.EasingStyle.Quint, Enum.EasingDirection.Out, {
+        Size = UDim2.new(targetPct, 0, 0, BAR_H)
+    })
+    activateSegments(targetPct)
+
+    -- Animated % counter
+    local startP  = currentPct
+    local elapsed = 0
+    local dur     = 0.62
+    local con; con = RunService.Heartbeat:Connect(function(dt)
+        elapsed += dt
+        local a = math.min(elapsed / dur, 1)
+        pctLbl.Text = math.floor((startP + (targetPct - startP) * a) * 100) .. "%"
+        if a >= 1 then con:Disconnect() end
+    end)
+    currentPct = targetPct
+
+    tw(statusLbl, 0.15, Enum.EasingStyle.Quad, nil, { TextTransparency = 1 })
+    task.wait(0.18)
+    statusLbl.Text = msg
+    tw(statusLbl, 0.22, Enum.EasingStyle.Quad, nil, { TextTransparency = 0 })
+
+    activateStep(stepIdx)
+end
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- MAIN SEQUENCE
+-- ══════════════════════════════════════════════════════════════════════════════
+task.spawn(function()
+    for _, step in ipairs(STEPS_DATA) do
+        local wait_time = game:IsLoaded() and (step.delay * 0.28) or step.delay
+        task.wait(wait_time)
+        setProgress(step.pct, step.msg, step.step)
+    end
+
+    if not game:IsLoaded() then game.Loaded:Wait() end
+    task.wait(1.15)
+
+    -- ── EXIT ─────────────────────────────────────────────────────────────────
+    alive = false
+
+    -- Card fires upward + fades
+    tw(canvas, 0.52, Enum.EasingStyle.Quint, Enum.EasingDirection.In, {
+        GroupTransparency = 1,
+        Position          = UDim2.new(0.5, 0, 0.40, 0),
+    })
+
+    tw(scanLine, 0.4, Enum.EasingStyle.Quad, nil, { BackgroundTransparency = 1 })
+
+    -- Particles scatter and vanish
+    for _, p in ipairs(particles) do
+        tw(p.f, RNG:NextNumber(0.25, 0.65), Enum.EasingStyle.Quad, nil, {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(0,0),
+        })
+    end
+
+    tw(glowOrb, 0.5, Enum.EasingStyle.Quad, nil, { ImageTransparency = 1 })
+    tw(blur, 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, { Size = 0 })
+
+    task.wait(0.9)
+    gui:Destroy()
+    blur:Destroy()
+end)
+
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
